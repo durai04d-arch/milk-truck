@@ -3,7 +3,7 @@
   const $ = id => document.getElementById(id);
   const STORAGE_KEY = "milkTruckDashboardConfigV1";
   let db = null, auth = null, latestRef = null, historyRef = null, latest = null;
-  let map = null, marker = null, deferredInstall = null;
+  let map = null, marker = null, deferredInstall = null, phoneLocationMode = false;
   const dialog = $("settingsDialog");
   const safe = (v, fallback = "—") => v === undefined || v === null || v === "" ? fallback : v;
   const fmtTime = v => {
@@ -78,19 +78,22 @@
     $("tempDot").className = "dot " + (valid ? (t >= 40 ? "bad" : t >= 35 ? "" : "good") : "bad");
     $("tempStatus").textContent = valid ? (d.temperatureStatus || (t >= 40 ? "ALARM" : t >= 35 ? "WARNING" : "NORMAL")) : "No valid temperature reading";
     $("tempBadge").textContent = safe(d.temperatureStatus, valid ? "NORMAL" : "SENSOR_ERROR");
-    $("gpsStatus").textContent = d.gpsFix && Number.isFinite(Number(d.latitude)) && Number.isFinite(Number(d.longitude)) ? "GPS fix" : "Searching";
-    $("gpsDot").className = "dot " + (d.gpsFix ? "good" : "bad");
-    const hasCoords = d.gpsFix && Number.isFinite(Number(d.latitude)) && Number.isFinite(Number(d.longitude));
-    $("coordinates").textContent = hasCoords ? `${Number(d.latitude).toFixed(6)}, ${Number(d.longitude).toFixed(6)}` : "Coordinates unavailable";
+    const hasTruckCoords = d.gpsFix && Number.isFinite(Number(d.latitude)) && Number.isFinite(Number(d.longitude));
+    if (!phoneLocationMode) {
+      $("gpsStatus").textContent = hasTruckCoords ? "Truck GPS fix" : "Searching";
+      $("gpsDot").className = "dot " + (hasTruckCoords ? "good" : "bad");
+      $("coordinates").textContent = hasTruckCoords ? `${Number(d.latitude).toFixed(6)}, ${Number(d.longitude).toFixed(6)}` : "Coordinates unavailable";
+      $("locationSource").textContent = safe(d.locationSource);
+      $("openMap").href = hasTruckCoords ? `https://maps.google.com/?q=${d.latitude},${d.longitude}` : "#";
+      $("openMap").style.pointerEvents = hasTruckCoords ? "auto" : "none";
+      $("locationNote").textContent = hasTruckCoords ? "Showing the truck's ESP32 GPS location." : "Truck GPS is not available. Tap “Use mobile GPS” to show this phone's location instead.";
+      if (hasTruckCoords) updateMap(Number(d.latitude), Number(d.longitude));
+    }
     $("speed").textContent = `${Number(d.speedKmph || 0).toFixed(1)}`;
     $("lastUpdate").textContent = fmtTime(d.timestamp);
     $("wifiStatus").textContent = d.wifiConnected ? "Connected" : "Offline";
     $("sensorStatus").textContent = valid ? "OK" : "Error";
     $("satellites").textContent = safe(d.satellites, "0");
-    $("locationSource").textContent = safe(d.locationSource);
-    $("openMap").href = hasCoords ? `https://maps.google.com/?q=${d.latitude},${d.longitude}` : "#";
-    $("openMap").style.pointerEvents = hasCoords ? "auto" : "none";
-    if (hasCoords) updateMap(Number(d.latitude), Number(d.longitude));
     const alert = $("alertBox");
     if (!valid) { alert.className = "alert bad"; alert.textContent = "Temperature sensor is not providing a valid reading."; }
     else if (t >= 40) { alert.className = "alert bad"; alert.textContent = "ALARM: Temperature has reached the configured alarm threshold (40°C). Verify your approved cold-chain limits."; }
@@ -146,6 +149,33 @@
     if (/help|what can you do|hello|hi\b/.test(q)) return "I can explain temperature, GPS, alerts, Wi-Fi, Firebase upload troubleshooting, and how this dashboard works. I use built-in rules and do not call an external AI service.";
     return "I can help with temperature, GPS/location, Wi-Fi, alerts, Firebase writes, or dashboard troubleshooting. Try asking “What is the temperature?” or “Is GPS working?”";
   }
+  $("mobileGpsBtn").addEventListener("click", () => {
+    if (!("geolocation" in navigator)) {
+      $("locationNote").textContent = "This browser does not support location services.";
+      return;
+    }
+    if (location.protocol !== "https:" && location.hostname !== "localhost") {
+      $("locationNote").textContent = "Phone GPS permission requires HTTPS. Deploy this website to Vercel and open its HTTPS URL.";
+      return;
+    }
+    $("locationNote").textContent = "Requesting permission to use this phone's location…";
+    navigator.geolocation.getCurrentPosition(pos => {
+      const lat = pos.coords.latitude, lng = pos.coords.longitude;
+      phoneLocationMode = true;
+      $("gpsStatus").textContent = "Phone GPS fix";
+      $("gpsDot").className = "dot good";
+      $("coordinates").textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+      $("locationSource").textContent = "mobile-phone";
+      $("openMap").href = `https://maps.google.com/?q=${lat},${lng}`;
+      $("openMap").style.pointerEvents = "auto";
+      $("locationNote").textContent = "Showing this phone's GPS location. This does not change the ESP32 truck location saved in Firebase.";
+      updateMap(lat, lng);
+      addMessage("Phone GPS location is now shown on the map. This is the phone's position, not necessarily the truck's position.", "bot");
+    }, err => {
+      $("locationNote").textContent = err.code === 1 ? "Location permission denied. Allow location access in your browser settings and try again." : "Could not get phone location. Check device location services and try again.";
+    }, {enableHighAccuracy:true, timeout:15000, maximumAge:5000});
+  });
+
   $("chatForm").addEventListener("submit", e => {
     e.preventDefault(); const input = $("chatInput").value.trim(); if (!input) return;
     addMessage(input, "user"); addMessage(botReply(input), "bot"); $("chatInput").value = "";
