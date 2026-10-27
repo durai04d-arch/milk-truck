@@ -1,0 +1,12 @@
+{
+  "rules": {
+    ".read": "auth != null",
+    ".write": false,
+    "trucks": {
+      "$truckId": {
+        ".read": "auth != null",
+        ".write": false
+      }
+    }
+  }
+}
