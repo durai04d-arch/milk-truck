@@ -6,7 +6,7 @@
 <link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <title>Milk Truck Live</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""><link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="topbar">
@@ -25,7 +25,7 @@
     <article class="metric"><div class="metric-top"><span>Last update</span></div><strong class="time" id="lastUpdate">—</strong><small id="uploadStatus">Waiting for first upload</small></article>
   </section>
   <section class="grid main-grid">
-    <article class="panel map-panel"><div class="panel-head"><div><h3>Truck location</h3><p>Map requires internet access.</p></div><div class="map-actions"><button id="mobileGpsBtn" class="secondary" type="button">Use mobile GPS</button><a id="openMap" href="#" target="_blank" rel="noreferrer">Open map ↗</a></div></div><div id="mapPlaceholder" class="map-placeholder">Waiting for truck GPS coordinates…<br><small>Or allow phone location with “Use mobile GPS”.</small></div><p id="locationNote" class="location-note">Truck GPS comes from the ESP32. Phone GPS is shown only when you request it.</p><div id="map" class="map"></div></article>
+    <article class="panel map-panel"><div class="panel-head"><div><h3>Truck location</h3><p>Map requires internet access.</p></div><div class="map-actions"><button id="mobileGpsBtn" class="secondary" type="button">Refresh GPS</button><a id="openMap" href="#" target="_blank" rel="noreferrer">Open map ↗</a></div></div><div id="mapPlaceholder" class="map-placeholder">Waiting for truck GPS coordinates…<br><small>Or allow phone location with “Use mobile GPS”.</small></div><p id="locationNote" class="location-note">Getting GPS coordinates…</p><div id="map" class="map"></div></article>
     <article class="panel"><div class="panel-head"><div><h3>Live diagnostics</h3><p>Device status from latest record</p></div></div><div class="diagnostics"><div><span>Wi-Fi</span><b id="wifiStatus">—</b></div><div><span>Temperature sensor</span><b id="sensorStatus">—</b></div><div><span>Satellites</span><b id="satellites">—</b></div><div><span>Location source</span><b id="locationSource">—</b></div><div><span>Temperature status</span><b id="tempBadge">—</b></div></div><div id="alertBox" class="alert neutral">Waiting for readings.</div></article>
   </section>
   <section class="grid bottom-grid">
@@ -43,7 +43,7 @@
 <p class="warning-note">Use Firebase Authentication and database rules that restrict access. Do not use public read/write rules for real tracking data.</p>
 <div class="dialog-actions"><button type="button" id="clearSettings" class="secondary">Clear saved settings</button><button type="submit" class="primary">Connect dashboard</button></div>
 </form></dialog>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="app.js"></script>

@@ -3,7 +3,7 @@
   const $ = id => document.getElementById(id);
   const STORAGE_KEY = "milkTruckDashboardConfigV1";
   let db = null, auth = null, latestRef = null, historyRef = null, latest = null;
-  let map = null, marker = null, deferredInstall = null, phoneLocationMode = false;
+  let map = null, marker = null, deferredInstall = null, phoneLocationMode = true, gpsWatchId = null;
   const dialog = $("settingsDialog");
   const safe = (v, fallback = "—") => v === undefined || v === null || v === "" ? fallback : v;
   const fmtTime = v => {
@@ -149,32 +149,36 @@
     if (/help|what can you do|hello|hi\b/.test(q)) return "I can explain temperature, GPS, alerts, Wi-Fi, Firebase upload troubleshooting, and how this dashboard works. I use built-in rules and do not call an external AI service.";
     return "I can help with temperature, GPS/location, Wi-Fi, alerts, Firebase writes, or dashboard troubleshooting. Try asking “What is the temperature?” or “Is GPS working?”";
   }
-  $("mobileGpsBtn").addEventListener("click", () => {
+  function requestDeviceGPS() {
     if (!("geolocation" in navigator)) {
-      $("locationNote").textContent = "This browser does not support location services.";
+      $("locationNote").textContent = "This browser does not support GPS location services.";
       return;
     }
     if (location.protocol !== "https:" && location.hostname !== "localhost") {
-      $("locationNote").textContent = "Phone GPS permission requires HTTPS. Deploy this website to Vercel and open its HTTPS URL.";
+      $("locationNote").textContent = "GPS permission requires HTTPS. Open this website using its secure HTTPS URL.";
       return;
     }
-    $("locationNote").textContent = "Requesting permission to use this phone's location…";
+    $("locationNote").textContent = "Getting GPS coordinates…";
     navigator.geolocation.getCurrentPosition(pos => {
       const lat = pos.coords.latitude, lng = pos.coords.longitude;
       phoneLocationMode = true;
-      $("gpsStatus").textContent = "Phone GPS fix";
+      $("gpsStatus").textContent = "GPS fix";
       $("gpsDot").className = "dot good";
       $("coordinates").textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-      $("locationSource").textContent = "mobile-phone";
+      $("locationSource").textContent = "GPS";
       $("openMap").href = `https://maps.google.com/?q=${lat},${lng}`;
       $("openMap").style.pointerEvents = "auto";
-      $("locationNote").textContent = "Showing this phone's GPS location. This does not change the ESP32 truck location saved in Firebase.";
+      $("locationNote").textContent = "GPS coordinates are displayed on the map.";
       updateMap(lat, lng);
-      addMessage("Phone GPS location is now shown on the map. This is the phone's position, not necessarily the truck's position.", "bot");
     }, err => {
-      $("locationNote").textContent = err.code === 1 ? "Location permission denied. Allow location access in your browser settings and try again." : "Could not get phone location. Check device location services and try again.";
-    }, {enableHighAccuracy:true, timeout:15000, maximumAge:5000});
-  });
+      $("gpsStatus").textContent = "Searching";
+      $("gpsDot").className = "dot bad";
+      $("locationNote").textContent = err.code === 1
+        ? "Location permission denied. Allow location access in your browser settings and refresh GPS."
+        : "GPS coordinates unavailable. Check device location services and try again.";
+    }, {enableHighAccuracy:true, timeout:20000, maximumAge:5000});
+  }
+  $("mobileGpsBtn").addEventListener("click", requestDeviceGPS);
 
   $("chatForm").addEventListener("submit", e => {
     e.preventDefault(); const input = $("chatInput").value.trim(); if (!input) return;
@@ -205,4 +209,6 @@
   }
   const saved = readConfig();
   if (saved) { fillForm(saved); connect(saved); } else { fillForm(); setConnection("Setup required"); setTimeout(() => dialog.showModal(), 400); }
+  // Automatically request the current device's GPS when the page starts.
+  requestDeviceGPS();
 })();
