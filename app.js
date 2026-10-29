@@ -3,7 +3,7 @@
   const $ = id => document.getElementById(id);
   const STORAGE_KEY = "milkTruckDashboardConfigV1";
   let db = null, auth = null, latestRef = null, historyRef = null, latest = null;
-  let map = null, marker = null, deferredInstall = null, phoneLocationMode = true, gpsWatchId = null;
+  let map = null, marker = null, deferredInstall = null, phoneLocationMode = true, gpsWatchId = null, lastTempAlertState = "";
   const dialog = $("settingsDialog");
   const safe = (v, fallback = "—") => v === undefined || v === null || v === "" ? fallback : v;
   const fmtTime = v => {
@@ -71,13 +71,31 @@
       alert("Firebase connection failed: " + (e.message || e.code || "Unknown error") + "\n\nCheck your Web API key, Firebase Authentication user, database URL, and database rules.");
     }
   }
+  async function notifyTemperature(title, body) {
+    if (!("Notification" in window)) return;
+    if (Notification.permission === "default") {
+      try { await Notification.requestPermission(); } catch {}
+    }
+    if (Notification.permission === "granted") {
+      try { new Notification(title, { body, icon: "./icons/icon-192.png", tag: "milk-truck-temperature-alert", renotify: true }); }
+      catch (e) { console.warn("Browser notification unavailable:", e); }
+    }
+  }
+
   function renderLatest(d) {
     const t = Number(d.temperatureC);
     const valid = d.temperatureValid !== false && d.temperatureC !== null && Number.isFinite(t);
     $("temperature").textContent = valid ? `${t.toFixed(2)}°C` : "Sensor error";
-    $("tempDot").className = "dot " + (valid ? (t >= 40 ? "bad" : t >= 35 ? "" : "good") : "bad");
-    $("tempStatus").textContent = valid ? (d.temperatureStatus || (t >= 40 ? "ALARM" : t >= 35 ? "WARNING" : "NORMAL")) : "No valid temperature reading";
-    $("tempBadge").textContent = safe(d.temperatureStatus, valid ? "NORMAL" : "SENSOR_ERROR");
+    $("tempDot").className = "dot " + (valid ? ((t < 6 || t >= 40) ? "bad" : t >= 35 ? "" : "good") : "bad");
+    const tempStatusText = !valid ? "SENSOR_ERROR" : t < 6 ? "LOW TEMPERATURE ALERT" : t >= 40 ? "ALARM" : t >= 35 ? "WARNING" : (d.temperatureStatus || "NORMAL");
+    $("tempStatus").textContent = tempStatusText;
+    $("tempBadge").textContent = tempStatusText;
+    const alertState = !valid ? "sensor-error" : t < 6 ? "low" : t >= 40 ? "high-alarm" : t >= 35 ? "high-warning" : "normal";
+    if (alertState !== lastTempAlertState) {
+      if (alertState === "low") notifyTemperature(`LOW TEMPERATURE ALERT: ${t.toFixed(2)}°C`, `Milk truck temperature is below 6°C (${t.toFixed(2)}°C). Check your approved cold-chain requirements.`);
+      else if (alertState === "high-alarm") notifyTemperature(`HIGH TEMPERATURE ALARM: ${t.toFixed(2)}°C`, `Milk truck temperature has reached ${t.toFixed(2)}°C.`);
+      lastTempAlertState = alertState;
+    }
     const hasTruckCoords = d.gpsFix && Number.isFinite(Number(d.latitude)) && Number.isFinite(Number(d.longitude));
     if (!phoneLocationMode) {
       $("gpsStatus").textContent = hasTruckCoords ? "Truck GPS fix" : "Searching";
@@ -179,6 +197,15 @@
     }, {enableHighAccuracy:true, timeout:20000, maximumAge:5000});
   }
   $("mobileGpsBtn").addEventListener("click", requestDeviceGPS);
+
+  $("enableNotifications").addEventListener("click", async () => {
+    if (!("Notification" in window)) return;
+    try {
+      const permission = await Notification.requestPermission();
+      $("enableNotifications").textContent = permission === "granted" ? "Browser notifications enabled" : "Enable browser notifications";
+      if (permission === "granted") new Notification("Milk Truck Live notifications enabled", {body:"You will be notified when a temperature alert is detected.", icon:"./icons/icon-192.png"});
+    } catch (e) { console.warn("Notification permission:", e); }
+  });
 
   $("chatForm").addEventListener("submit", e => {
     e.preventDefault(); const input = $("chatInput").value.trim(); if (!input) return;

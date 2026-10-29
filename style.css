@@ -2,3 +2,5 @@
 .map-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.map-actions button{font-size:12px;padding:8px 10px}.location-note{font-size:11px;color:var(--muted);margin:10px 2px 0;line-height:1.4}.map-placeholder small{display:block;margin-top:8px}
 
 .map-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.map-actions button{font-size:12px;padding:8px 10px}.location-note{font-size:11px;color:var(--muted);margin:10px 2px 0;line-height:1.4}.map-placeholder small{display:block;margin-top:8px}
+
+.notification-btn{margin-top:10px;font-size:12px;padding:8px 11px}
