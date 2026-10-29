@@ -4,8 +4,6 @@
   const STORAGE_KEY = "milkTruckDashboardConfigV1";
   let db = null, auth = null, latestRef = null, historyRef = null, latest = null;
   let map = null, marker = null, deferredInstall = null, phoneLocationMode = true, gpsWatchId = null, lastTempAlertState = "";
-  let currentDevicePosition = null, locationTrail = [], trailLine = null, lastMovementState = "Unknown";
-  const LOCATION_HISTORY_KEY = "milkTruckDeviceLocationHistoryV1";
   const dialog = $("settingsDialog");
   const safe = (v, fallback = "—") => v === undefined || v === null || v === "" ? fallback : v;
   const fmtTime = v => {
@@ -84,71 +82,17 @@
     }
   }
 
-  function loadLocationTrail() {
-    try { locationTrail = JSON.parse(localStorage.getItem(LOCATION_HISTORY_KEY) || "[]"); } catch { locationTrail = []; }
-    if (!Array.isArray(locationTrail)) locationTrail = [];
-  }
-  function saveLocationPoint(lat, lng, accuracy) {
-    const point = {lat, lng, accuracy: accuracy || null, timestamp: Date.now()};
-    const last = locationTrail[locationTrail.length - 1];
-    if (!last || Math.abs(last.lat-lat) > 0.00001 || Math.abs(last.lng-lng) > 0.00001 || point.timestamp-last.timestamp > 60000) {
-      locationTrail.push(point);
-      locationTrail = locationTrail.slice(-500);
-      try { localStorage.setItem(LOCATION_HISTORY_KEY, JSON.stringify(locationTrail)); } catch {}
-      renderLocationTrail();
-    }
-  }
-  function renderLocationTrail() {
-    if (!map || !window.L || !locationTrail.length) return;
-    const points = locationTrail.map(p => [p.lat,p.lng]);
-    if (trailLine) trailLine.remove();
-    trailLine = L.polyline(points, {color:"#5de1d0", weight:4, opacity:.8}).addTo(map);
-  }
-  function updateMovementStatus(lat, lng, timestamp) {
-    const prev = locationTrail.length ? locationTrail[locationTrail.length-1] : null;
-    if (prev && timestamp > prev.timestamp) {
-      const rad = x => x*Math.PI/180;
-      const dLat=rad(lat-prev.lat), dLng=rad(lng-prev.lng);
-      const a=Math.sin(dLat/2)**2+Math.cos(rad(prev.lat))*Math.cos(rad(lat))*Math.sin(dLng/2)**2;
-      const km=6371*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
-      const hours=(timestamp-prev.timestamp)/3600000;
-      const kmh=hours>0 ? km/hours : 0;
-      lastMovementState = kmh >= 3 ? "Running" : "Standing";
-    } else if (!prev) lastMovementState = "Collecting GPS";
-    $("movementStatus").textContent = lastMovementState;
-  }
-  function drawTemperatureChart(history) {
-    const canvas=$("temperatureChart"); if (!canvas) return;
-    const ctx=canvas.getContext("2d"); if (!ctx) return;
-    const w=canvas.clientWidth || 600, h=260, dpr=window.devicePixelRatio||1;
-    canvas.width=w*dpr; canvas.height=h*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,w,h);
-    const values=(history||[]).filter(x=>Number.isFinite(Number(x.temperatureC))).slice(-30);
-    if (!values.length) { ctx.fillStyle="#94a9bf"; ctx.font="14px system-ui"; ctx.fillText("Temperature history will appear after records load.",16,32); $("chartSummary").textContent="No readings"; return; }
-    const temps=values.map(x=>Number(x.temperatureC)), min=Math.min(...temps,6)-1, max=Math.max(...temps,6)+1;
-    const left=42,right=12,top=16,bottom=34, cw=w-left-right,ch=h-top-bottom;
-    ctx.font="11px system-ui"; ctx.strokeStyle="#2a4057"; ctx.fillStyle="#94a9bf"; ctx.lineWidth=1;
-    for(let i=0;i<5;i++){const y=top+ch*i/4;ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(w-right,y);ctx.stroke();ctx.fillText((max-(max-min)*i/4).toFixed(1),3,y+4);}
-    const thresholdY=top+ch*(max-6)/(max-min);ctx.setLineDash([5,4]);ctx.strokeStyle="#ffca70";ctx.beginPath();ctx.moveTo(left,thresholdY);ctx.lineTo(w-right,thresholdY);ctx.stroke();ctx.setLineDash([]);
-    ctx.strokeStyle="#5de1d0";ctx.lineWidth=2.5;ctx.beginPath();
-    temps.forEach((t,i)=>{const x=left+(values.length===1?cw/2:cw*i/(values.length-1));const y=top+ch*(max-t)/(max-min);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);});
-    ctx.stroke();ctx.fillStyle="#70a7ff";
-    temps.forEach((t,i)=>{const x=left+(values.length===1?cw/2:cw*i/(values.length-1));const y=top+ch*(max-t)/(max-min);ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();});
-    ctx.fillStyle="#94a9bf";ctx.fillText(fmtTime(values[0].timestamp),left,h-9);const last=values[values.length-1];const lastLabel=fmtTime(last.timestamp);ctx.fillText(lastLabel,Math.max(left,w-right-ctx.measureText(lastLabel).width),h-9);
-    const latestTemp=temps[temps.length-1];$("chartSummary").textContent=`Latest ${latestTemp.toFixed(2)}°C · ${values.length} readings`;
-  }
-
   function renderLatest(d) {
     const t = Number(d.temperatureC);
     const valid = d.temperatureValid !== false && d.temperatureC !== null && Number.isFinite(t);
     $("temperature").textContent = valid ? `${t.toFixed(2)}°C` : "Sensor error";
-    $("tempDot").className = "dot " + (valid ? ((t > 6 || t >= 40) ? "bad" : t >= 35 ? "" : "good") : "bad");
-    const tempStatusText = !valid ? "SENSOR_ERROR" : t >= 40 ? "ALARM" : t >= 35 ? "WARNING" : t > 6 ? "TEMPERATURE ABOVE 6°C ALERT" : (d.temperatureStatus || "NORMAL");
+    $("tempDot").className = "dot " + (valid ? ((t < 6 || t >= 40) ? "bad" : t >= 35 ? "" : "good") : "bad");
+    const tempStatusText = !valid ? "SENSOR_ERROR" : t < 6 ? "LOW TEMPERATURE ALERT" : t >= 40 ? "ALARM" : t >= 35 ? "WARNING" : (d.temperatureStatus || "NORMAL");
     $("tempStatus").textContent = tempStatusText;
     $("tempBadge").textContent = tempStatusText;
-    const alertState = !valid ? "sensor-error" : t >= 40 ? "high-alarm" : t >= 35 ? "high-warning" : t > 6 ? "above6" : "normal";
+    const alertState = !valid ? "sensor-error" : t < 6 ? "low" : t >= 40 ? "high-alarm" : t >= 35 ? "high-warning" : "normal";
     if (alertState !== lastTempAlertState) {
-      if (alertState === "above6") notifyTemperature(`TEMPERATURE ABOVE 6°C ALERT: ${t.toFixed(2)}°C`, `Milk truck temperature is above 6°C (${t.toFixed(2)}°C). Check your approved cold-chain requirements.`);
-      else if (alertState === "high-warning") notifyTemperature(`HIGH TEMPERATURE WARNING: ${t.toFixed(2)}°C`, `Milk truck temperature has reached ${t.toFixed(2)}°C.`);
+      if (alertState === "low") notifyTemperature(`LOW TEMPERATURE ALERT: ${t.toFixed(2)}°C`, `Milk truck temperature is below 6°C (${t.toFixed(2)}°C). Check your approved cold-chain requirements.`);
       else if (alertState === "high-alarm") notifyTemperature(`HIGH TEMPERATURE ALARM: ${t.toFixed(2)}°C`, `Milk truck temperature has reached ${t.toFixed(2)}°C.`);
       lastTempAlertState = alertState;
     }
@@ -183,23 +127,17 @@
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {maxZoom:19, attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
       marker = L.marker([lat,lng]).addTo(map).bindPopup("Milk truck");
     } else { marker.setLatLng([lat,lng]); map.setView([lat,lng], Math.max(map.getZoom(), 14)); }
-    renderLocationTrail();
   }
   function renderHistory(snap) {
     const data = snap.val();
     const rows = [];
-    const historyForChart = [];
     if (data && typeof data === "object") {
       Object.entries(data).map(([key,val]) => ({key,...(val || {})}))
         .sort((a,b) => Number(a.timestamp || 0) - Number(b.timestamp || 0))
-        .reverse().slice(0,120).forEach(d => {
-          historyForChart.push(d);
+        .reverse().slice(0,12).forEach(d => {
           const tr = document.createElement("tr");
-          const recordHasGps = d.gpsFix && Number.isFinite(Number(d.latitude)) && Number.isFinite(Number(d.longitude));
-          const gpsText = recordHasGps ? `${Number(d.latitude).toFixed(5)}, ${Number(d.longitude).toFixed(5)}` :
-            (currentDevicePosition ? `${currentDevicePosition.lat.toFixed(5)}, ${currentDevicePosition.lng.toFixed(5)}` : "Waiting for GPS");
           [fmtTime(d.timestamp), d.temperatureC == null ? "—" : `${Number(d.temperatureC).toFixed(2)}°C`,
-           gpsText, safe(d.temperatureStatus, "—")].forEach(text => {
+           d.gpsFix ? "Fix" : "No fix", safe(d.temperatureStatus, "—")].forEach(text => {
              const td = document.createElement("td"); td.textContent = text; tr.appendChild(td);
            });
           rows.push(tr);
@@ -208,7 +146,6 @@
     const body = $("historyRows"); body.replaceChildren();
     if (!rows.length) { const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=4;td.textContent="No history records found.";tr.appendChild(td);body.appendChild(tr);return; }
     rows.forEach(r => body.appendChild(r));
-    drawTemperatureChart(historyForChart.slice().reverse());
   }
   function addMessage(text, who) {
     const div = document.createElement("div"); div.className = `bubble ${who}`; div.textContent = text;
@@ -216,18 +153,6 @@
   }
   function botReply(input) {
     const q = input.toLowerCase();
-    if (/temperature issue|temp issue|any temperature|temperature problem/.test(q)) {
-      if (!latest || latest.temperatureC == null) return "No valid temperature reading is available yet. Check the DS18B20 sensor and Firebase latest record.";
-      const t=Number(latest.temperatureC);
-      if (t > 6) return `TEMPERATURE ALERT: Current reading is ${t.toFixed(2)}°C, which is above your 6°C threshold. Check cooling, the sensor placement, and your approved milk cold-chain procedure.`;
-      return `No above-6°C alert right now. Current temperature is ${t.toFixed(2)}°C. Continue monitoring and follow your approved cold-chain limits.`;
-    }
-    if (/location history|track.*location|route history/.test(q)) {
-      return locationTrail.length ? `This browser has ${locationTrail.length} saved GPS points on this device. The map draws the available location trail. History is stored locally in this browser and is not shared to Firebase or other devices.` : "No location history has been collected yet. Allow GPS access and keep the dashboard open to record points.";
-    }
-    if (/standing|running|moving|truck status/.test(q)) {
-      return `Movement status: ${lastMovementState}. This is estimated from changes in the browser device's GPS position, so it describes the device carrying the dashboard, not necessarily the truck. Reliable truck status requires GPS coordinates/speed from the ESP32 or a device physically in the truck.`;
-    }
     if (/temp|temperature|cold|milk/.test(q)) {
       if (!latest) return "I haven't received a truck record yet. Check Firebase connection and make sure the ESP32 uploads to /trucks/<truckId>/latest.";
       return `Latest temperature: ${latest.temperatureC == null ? "unavailable" : Number(latest.temperatureC).toFixed(2) + "°C"}. Status: ${latest.temperatureStatus || "unknown"}. The 35°C warning and 40°C alarm are prototype settings, not validated milk-safety limits.`;
@@ -254,9 +179,6 @@
     $("locationNote").textContent = "Getting GPS coordinates…";
     navigator.geolocation.getCurrentPosition(pos => {
       const lat = pos.coords.latitude, lng = pos.coords.longitude;
-      currentDevicePosition = {lat, lng, timestamp: Date.now()};
-      updateMovementStatus(lat, lng, currentDevicePosition.timestamp);
-      saveLocationPoint(lat, lng, pos.coords.accuracy);
       phoneLocationMode = true;
       $("gpsStatus").textContent = "GPS fix";
       $("gpsDot").className = "dot good";
@@ -312,7 +234,6 @@
   if ("serviceWorker" in navigator && location.protocol !== "file:") {
     window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(err => console.warn("PWA service worker:", err)));
   }
-  loadLocationTrail();
   const saved = readConfig();
   if (saved) { fillForm(saved); connect(saved); } else { fillForm(); setConnection("Setup required"); setTimeout(() => dialog.showModal(), 400); }
   // Automatically request the current device's GPS when the page starts.
