@@ -45,3 +45,20 @@ The app shell and static assets are cached. Live Firebase data and map tiles req
 - History records: `POST /trucks/milkTruck01/history.json`
 
 Keep the truck ID consistent between firmware and dashboard.
+
+
+## Temperature notification threshold
+The dashboard displays a temperature alert and attempts a browser notification when the latest valid temperature is **above 6°C**. Browser notifications require permission and a secure HTTPS origin. This threshold is configurable in the website JavaScript and should be checked against approved cold-chain requirements.
+
+## Analytics and location history
+- The temperature analytics chart plots up to 30 recent Firebase temperature readings and shows a 6°C reference line.
+- Recent History shows record GPS coordinates when the ESP32 record has a GPS fix; otherwise it shows the current browser-device coordinates when permission is granted. This fallback is current coordinates, not historical coordinates for each past record.
+- Browser GPS points are stored locally in that browser and drawn as a map trail while the dashboard is used. They are not automatically synced to Firebase or shared with other devices.
+- Standing/running is estimated from GPS movement on the browser device. For actual truck movement status, the ESP32 must upload its own GPS/speed fields.
+
+## Saving GPS coordinates to Firebase
+When location permission is granted and Firebase is connected, the dashboard writes the current GPS coordinates to:
+- `/trucks/milkTruck01/gpsLocation` (latest coordinates)
+- `/trucks/milkTruck01/gpsLocationHistory` (appended history)
+
+Each record contains `latitude`, `longitude`, `accuracyMeters`, `timestamp`, and `locationName: "GPS"`. The browser must remain open to keep collecting new location points. The authenticated Firebase user needs write permission for these paths. Avoid public database rules for real tracking data.
