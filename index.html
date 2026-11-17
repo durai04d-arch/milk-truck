@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,15 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 
   <meta name="theme-color" content="#0b1728">
-  <meta name="description" content="Live milk truck temperature and GPS monitoring dashboard">
+  <meta name="description" content="Rural MilkGuard - Live milk truck temperature, GPS and cold-chain monitoring dashboard">
 
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
 
-  <title>Milk Truck Live | Rural MilkGuard</title>
+  <title>🥛 Milk Truck Live | Rural MilkGuard</title>
 
-  <!-- Leaflet Map -->
+  <!-- Leaflet -->
   <link
     rel="stylesheet"
     href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -22,19 +21,116 @@
     crossorigin=""
   >
 
-  <!-- Main Stylesheet -->
+  <!-- Dashboard CSS -->
   <link rel="stylesheet" href="style.css">
+
+  <style>
+    /* Small compatibility and responsive improvements */
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+    }
+
+    button, input {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:focus-visible,
+    a:focus-visible,
+    input:focus-visible {
+      outline: 2px solid #34d399;
+      outline-offset: 3px;
+    }
+
+    .metric,
+    .panel {
+      min-width: 0;
+    }
+
+    .metric strong {
+      overflow-wrap: anywhere;
+    }
+
+    .map {
+      width: 100%;
+      min-height: 300px;
+      border-radius: 14px;
+      z-index: 1;
+    }
+
+    .map-placeholder {
+      text-align: center;
+      padding: 30px 12px;
+    }
+
+    .emoji-icon {
+      margin-right: 7px;
+    }
+
+    .risk-legend {
+      line-height: 1.7;
+    }
+
+    .notification-btn[aria-pressed="true"] {
+      border-color: #34d399;
+    }
+
+    .chat-log {
+      overflow-y: auto;
+      max-height: 300px;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    @media (max-width: 600px) {
+      .hero {
+        gap: 16px;
+      }
+
+      .hero-actions,
+      .alert-controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .hero-actions button,
+      .alert-controls button {
+        flex: 1;
+      }
+
+      .map {
+        min-height: 260px;
+      }
+    }
+  </style>
 </head>
 
 <body>
 
   <!-- HEADER -->
   <header class="topbar">
+
     <div class="brand">
       <div class="logo">MT</div>
 
       <div>
-        <h1>Milk Truck Live</h1>
+        <h1>🥛 Milk Truck Live</h1>
         <p>Cold-chain monitoring dashboard</p>
       </div>
     </div>
@@ -44,10 +140,11 @@
         Connecting…
       </span>
 
-      <button id="installBtn" class="secondary" hidden>
-        Install app
+      <button id="installBtn" class="secondary" type="button" hidden>
+        📲 Install app
       </button>
     </div>
+
   </header>
 
   <main class="wrap">
@@ -61,20 +158,20 @@
           <span id="truckLabel">milkTruck01</span>
         </p>
 
-        <h2>Keep every delivery in view.</h2>
+        <h2>Keep every delivery in view. 🚚</h2>
 
         <p class="sub">
-          Live temperature, location, and upload health from your ESP32.
+          Monitor milk temperature, truck location, and ESP32 upload health in real time.
         </p>
       </div>
 
       <div class="hero-actions">
         <button id="refreshBtn" class="secondary" type="button">
-          Refresh
+          🔄 Refresh
         </button>
 
         <button id="settingsBtn" class="primary" type="button">
-          Firebase settings
+          ⚙️ Firebase settings
         </button>
       </div>
 
@@ -85,7 +182,7 @@
 
       <article class="metric">
         <div class="metric-top">
-          <span>Milk temperature</span>
+          <span>🌡️ Milk temperature</span>
           <span class="dot" id="tempDot"></span>
         </div>
 
@@ -98,7 +195,7 @@
 
       <article class="metric">
         <div class="metric-top">
-          <span>GPS status</span>
+          <span>📍 GPS status</span>
           <span class="dot" id="gpsDot"></span>
         </div>
 
@@ -111,7 +208,7 @@
 
       <article class="metric">
         <div class="metric-top">
-          <span>Truck speed</span>
+          <span>🚚 Truck speed</span>
         </div>
 
         <strong id="speed">—</strong>
@@ -121,7 +218,7 @@
 
       <article class="metric">
         <div class="metric-top">
-          <span>Last update</span>
+          <span>🕒 Last update</span>
         </div>
 
         <strong class="time" id="lastUpdate">—</strong>
@@ -136,22 +233,23 @@
     <!-- MAIN GRID -->
     <section class="grid main-grid">
 
-      <!-- MAP -->
+      <!-- LIVE MAP -->
       <article class="panel map-panel">
 
         <div class="panel-head">
           <div>
-            <h3>Truck location</h3>
-            <p>Live GPS tracking</p>
+            <h3>🗺️ Truck location</h3>
+            <p>Live GPS tracking from your truck</p>
           </div>
 
           <div class="map-actions">
+
             <button
               id="mobileGpsBtn"
               class="secondary"
               type="button"
             >
-              Refresh GPS
+              📍 Refresh GPS
             </button>
 
             <a
@@ -162,16 +260,17 @@
             >
               Open map ↗
             </a>
+
           </div>
         </div>
 
         <div id="mapPlaceholder" class="map-placeholder">
-          Waiting for truck GPS coordinates…
+          📡 Waiting for truck GPS coordinates…
 
           <br>
 
           <small>
-            Or allow location access using Refresh GPS.
+            Allow location access if you want to use the device's GPS.
           </small>
         </div>
 
@@ -183,45 +282,45 @@
 
       </article>
 
-      <!-- LIVE DIAGNOSTICS -->
+      <!-- DIAGNOSTICS -->
       <article class="panel">
 
         <div class="panel-head">
           <div>
-            <h3>Live diagnostics</h3>
-            <p>Device status from latest record</p>
+            <h3>🔧 Live diagnostics</h3>
+            <p>Device status from latest ESP32 record</p>
           </div>
         </div>
 
         <div class="diagnostics">
 
           <div>
-            <span>Wi-Fi</span>
+            <span>📶 Wi-Fi</span>
             <b id="wifiStatus">—</b>
           </div>
 
           <div>
-            <span>Temperature sensor</span>
+            <span>🌡️ Temperature sensor</span>
             <b id="sensorStatus">—</b>
           </div>
 
           <div>
-            <span>Satellites</span>
+            <span>🛰️ Satellites</span>
             <b id="satellites">—</b>
           </div>
 
           <div>
-            <span>Location source</span>
+            <span>📍 Location source</span>
             <b id="locationSource">GPS</b>
           </div>
 
           <div>
-            <span>Movement status</span>
+            <span>🚛 Movement status</span>
             <b id="movementStatus">Unknown</b>
           </div>
 
           <div>
-            <span>Temperature status</span>
+            <span>⚠️ Temperature status</span>
             <b id="tempBadge">—</b>
           </div>
 
@@ -234,34 +333,29 @@
           role="status"
           aria-live="polite"
         >
-          Waiting for readings.
+          Waiting for temperature readings…
         </div>
 
         <!-- RISK RULES -->
         <p class="risk-legend">
-          <b>Risk rules:</b>
+          <b>🚨 Risk classification:</b>
 
           SAFE below 6°C ·
-
-          WARNING 6–below 7.5°C with rise ≥0.4°C/sample ·
-
-          ALERT 7.5–below 9°C or ≥6°C for 10 minutes ·
-
-          CRITICAL ≥9°C or ≥6°C for 30 minutes.
+          WARNING 6°C to below 7.5°C with rise ≥0.4°C/sample ·
+          ALERT 7.5°C to below 9°C or exposure ≥10 minutes ·
+          CRITICAL ≥9°C or exposure ≥30 minutes.
         </p>
 
-        <!-- AUDIO HELP -->
+        <!-- SOUND HELP -->
         <p class="risk-legend">
-          Click <b>Enable sound alerts</b> once to activate dashboard audio.
+          🔊 Enable sound alerts once using the button below.
 
-          For pop-up alerts, click
-          <b>Enable browser notifications</b> and allow notifications
-          in your browser.
+          🔔 Allow browser notifications for pop-up alerts.
 
-          Keep the dashboard open for live alerts.
+          Keep the dashboard open to receive live alerts.
         </p>
 
-        <!-- SOUND CONTROLS -->
+        <!-- ALERT CONTROLS -->
         <div class="alert-controls">
 
           <button
@@ -270,7 +364,7 @@
             type="button"
             aria-pressed="false"
           >
-            Enable sound alerts
+            🔊 Enable sound alerts
           </button>
 
           <button
@@ -278,7 +372,7 @@
             class="secondary notification-btn"
             type="button"
           >
-            Enable browser notifications
+            🔔 Enable browser notifications
           </button>
 
         </div>
@@ -291,23 +385,27 @@
     <section class="panel analytics-panel">
 
       <div class="panel-head">
+
         <div>
-          <h3>Temperature analytics</h3>
-          <p>Recent temperature readings over time</p>
+          <h3>📊 Temperature analytics</h3>
+          <p>Recent milk temperature readings over time</p>
         </div>
 
         <span id="chartSummary" class="chart-summary">
           Waiting for history
         </span>
+
       </div>
 
       <div class="chart-wrap">
+
         <canvas
           id="temperatureChart"
           height="260"
-          aria-label="Temperature history chart"
+          aria-label="Milk temperature history chart"
           role="img"
         ></canvas>
+
       </div>
 
     </section>
@@ -320,7 +418,7 @@
 
         <div class="panel-head">
           <div>
-            <h3>Recent history</h3>
+            <h3>📋 Recent history</h3>
             <p>Latest records from Firebase</p>
           </div>
         </div>
@@ -356,8 +454,8 @@
         <div class="panel-head">
 
           <div>
-            <h3>Truck assistant</h3>
-            <p>Built-in rule-based bot · no AI API key</p>
+            <h3>🤖 Truck assistant</h3>
+            <p>Built-in rule-based assistant · No AI API key</p>
           </div>
 
           <span class="bot-icon">✦</span>
@@ -370,51 +468,53 @@
           aria-live="polite"
         >
           <div class="bubble bot">
-            Hi! Ask me about temperature, GPS, connectivity,
-            alerts, or how to troubleshoot the truck.
+            Hi! 👋 Ask me about temperature, GPS, connectivity,
+            alerts, truck status, or troubleshooting.
           </div>
         </div>
 
+        <!-- CHAT INPUT -->
         <form id="chatForm" class="chat-form">
 
           <input
             id="chatInput"
+            type="text"
             autocomplete="off"
             placeholder="Ask about the truck…"
             aria-label="Ask the truck assistant"
           >
 
           <button class="primary" type="submit">
-            Send
+            Send ➤
           </button>
 
         </form>
 
-        <!-- QUICK QUESTIONS -->
+        <!-- QUICK PROMPTS -->
         <div class="quick-prompts">
 
           <button type="button" data-prompt="What is the temperature?">
-            Temperature
+            🌡️ Temperature
           </button>
 
           <button type="button" data-prompt="Is GPS working?">
-            GPS
+            📍 GPS
           </button>
 
           <button type="button" data-prompt="Is there any temperature issue?">
-            Temperature issue?
+            🚨 Temperature issue?
           </button>
 
           <button type="button" data-prompt="Show location history">
-            Location history
+            🗺️ Location history
           </button>
 
           <button type="button" data-prompt="Is the truck standing or running?">
-            Truck status
+            🚚 Truck status
           </button>
 
           <button type="button" data-prompt="Why is data not updating?">
-            Troubleshoot
+            🔧 Troubleshoot
           </button>
 
         </div>
@@ -425,13 +525,13 @@
 
     <!-- FOOTER -->
     <footer>
-      Milk Truck Live · Rural MilkGuard · Prototype dashboard
+      🥛 Milk Truck Live · Rural MilkGuard
 
       <br>
 
       <small>
-        Verify cold-chain temperature limits with your approved
-        project requirements.
+        Prototype monitoring system. Verify cold-chain thresholds
+        against your approved project requirements.
       </small>
     </footer>
 
@@ -443,14 +543,18 @@
     <form method="dialog" class="dialog-head">
 
       <div>
-        <h3>Firebase configuration</h3>
+        <h3>⚙️ Firebase configuration</h3>
 
         <p>
-          Saved only in this browser on this device.
+          Configuration is saved only in this browser.
         </p>
       </div>
 
-      <button class="icon-btn" aria-label="Close">
+      <button
+        class="icon-btn"
+        type="submit"
+        aria-label="Close settings"
+      >
         ✕
       </button>
 
@@ -474,6 +578,7 @@
 
         <input
           id="dbUrl"
+          type="url"
           required
           value="https://milk-truck-default-rtdb.asia-southeast1.firebasedatabase.app"
         >
@@ -512,8 +617,8 @@
       </label>
 
       <p class="warning-note">
-        Use Firebase Authentication and database rules that restrict
-        access. Never use public read/write rules for real tracking data.
+        🔒 Use Firebase Authentication and database rules that restrict
+        access. Do not use public read/write rules for real tracking data.
       </p>
 
       <div class="dialog-actions">
@@ -536,25 +641,24 @@
 
   </dialog>
 
-  <!-- EXTERNAL LIBRARIES -->
-
+  <!-- LEAFLET MAP LIBRARY -->
   <script
     src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
     crossorigin=""
   ></script>
 
-  <!-- Firebase COMPAT SDK -->
+  <!-- FIREBASE COMPAT SDK -->
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 
-  <!-- Chart.js -->
+  <!-- CHART.JS -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 
-  <!-- MAIN APPLICATION -->
+  <!-- APPLICATION -->
   <script src="app.js"></script>
 
 </body>
