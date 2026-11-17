@@ -96,7 +96,18 @@
 
   function formatTime(value) {
     const ms = normalizeTimestamp(value);
-    return Number.isFinite(ms) ? new Date(ms).toLocaleString() : "—";
+    return Number.isFinite(ms)
+      ? new Date(ms).toLocaleString("en-IN", {
+          timeZone: "Asia/Kolkata",
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false
+        })
+      : "—";
   }
 
   function setConnection(message, kind = "muted") {
@@ -278,17 +289,20 @@
     return normalizeTimestamp(record?.timestamp);
   }
 
-  function classifyRisk(records) {
-    const sorted = (records || [])
-      .filter((record) => {
-        const temperature = Number(record?.temperatureC);
-        return record &&
-          record.temperatureC !== null &&
-          record.temperatureC !== undefined &&
-          record.temperatureC !== "" &&
-          Number.isFinite(temperature) &&
-          Number.isFinite(timestampMs(record));
-      })
+  function validTemperatureRecord(record) {
+    const temperature = Number(record?.temperatureC);
+    return record &&
+      record.temperatureValid !== false &&
+      record.temperatureC !== null &&
+      record.temperatureC !== undefined &&
+      record.temperatureC !== "" &&
+      Number.isFinite(temperature) &&
+      Number.isFinite(timestampMs(record));
+  }
+
+  function getSortedTemperatureRecords(records) {
+    return (records || [])
+      .filter(validTemperatureRecord)
       .map((record) => ({
         temperature: Number(record.temperatureC),
         timestamp: timestampMs(record)
@@ -297,27 +311,65 @@
       .filter((record, index, array) =>
         index === 0 || record.timestamp !== array[index - 1].timestamp
       );
+  }
 
-    if (!sorted.length) {
+  // Current status depends ONLY on the latest valid temperature reading.
+  // Historical exposure is deliberately calculated separately below.
+  function classifyCurrentTemperature(record, previousRecord = null) {
+    if (!validTemperatureRecord(record)) {
       return {
         level: "SENSOR_ERROR",
-        exposureMs: 0,
-        rise: 0,
         temperature: NaN,
+        rise: 0,
         timestamp: NaN
       };
     }
 
-    const current = sorted[sorted.length - 1];
-    const previous = sorted.length > 1 ? sorted[sorted.length - 2] : null;
+    const temperature = Number(record.temperatureC);
+    const previousTemperature = validTemperatureRecord(previousRecord)
+      ? Number(previousRecord.temperatureC)
+      : NaN;
+    const rise = Number.isFinite(previousTemperature)
+      ? temperature - previousTemperature
+      : 0;
 
+    let level = "SAFE";
+    if (temperature >= 9) {
+      level = "CRITICAL";
+    } else if (temperature >= 7.5) {
+      level = "ALERT";
+    } else if (
+      temperature >= 6 &&
+      temperature < 7.5 &&
+      Number.isFinite(previousTemperature) &&
+      previousTemperature >= 6 &&
+      rise >= 0.4
+    ) {
+      level = "WARNING";
+    } else if (temperature >= 6) {
+      level = "MONITORING";
+    }
+
+    return {
+      level,
+      temperature,
+      rise,
+      timestamp: timestampMs(record)
+    };
+  }
+
+  // Exposure is a separate historical metric. It is not allowed to keep
+  // the CURRENT temperature badge stuck at ALERT/CRITICAL after cooling.
+  function calculateExposure(records) {
+    const sorted = getSortedTemperatureRecords(records);
     let exposureMs = 0;
+
     for (let index = 1; index < sorted.length; index++) {
       const before = sorted[index - 1];
       const after = sorted[index];
       const gap = after.timestamp - before.timestamp;
 
-      // Do not assume exposure during long gaps with no sensor readings.
+      // Count only consecutive readings >=6°C, no more than 10 minutes apart.
       if (
         before.temperature >= 6 &&
         after.temperature >= 6 &&
@@ -328,32 +380,27 @@
       }
     }
 
-    const rise = previous ? current.temperature - previous.temperature : 0;
     let level = "SAFE";
-
-    if (current.temperature >= 9 || exposureMs >= 30 * 60 * 1000) {
+    if (exposureMs >= 30 * 60 * 1000) {
       level = "CRITICAL";
-    } else if (current.temperature >= 7.5 || exposureMs >= 10 * 60 * 1000) {
+    } else if (exposureMs >= 10 * 60 * 1000) {
       level = "ALERT";
-    } else if (
-      current.temperature >= 6 &&
-      current.temperature < 7.5 &&
-      previous &&
-      previous.temperature >= 6 &&
-      rise >= 0.4
-    ) {
-      level = "WARNING";
-    } else if (current.temperature >= 6) {
+    } else if (exposureMs > 0) {
       level = "MONITORING";
     }
 
-    return {
-      level,
-      exposureMs,
-      rise,
-      temperature: current.temperature,
-      timestamp: current.timestamp
-    };
+    return { level, exposureMs };
+  }
+
+  function severityRank(level) {
+    return ({
+      SAFE: 0,
+      MONITORING: 1,
+      WARNING: 2,
+      ALERT: 3,
+      CRITICAL: 4,
+      SENSOR_ERROR: 5
+    })[level] ?? 0;
   }
 
   function stopSoundLoop() {
@@ -452,50 +499,71 @@
     const combined = (records || []).slice();
     if (latestRecord) combined.push(latestRecord);
 
-    const result = classifyRisk(combined);
-    currentRisk = result;
+    const sorted = getSortedTemperatureRecords(combined);
+    const latestValid = sorted.length ? sorted[sorted.length - 1] : null;
+    const previousValid = sorted.length > 1 ? sorted[sorted.length - 2] : null;
 
-    const meta = RISK[result.level] || RISK.SENSOR_ERROR;
-    let statusText = meta.label;
+    const current = latestValid
+      ? classifyCurrentTemperature(
+          { temperatureC: latestValid.temperature, timestamp: latestValid.timestamp, temperatureValid: true },
+          previousValid
+            ? { temperatureC: previousValid.temperature, timestamp: previousValid.timestamp, temperatureValid: true }
+            : null
+        )
+      : { level: "SENSOR_ERROR", temperature: NaN, rise: 0, timestamp: NaN };
 
-    if (result.level === "MONITORING") {
-      statusText = `MONITORING · exposure ${(result.exposureMs / 60000).toFixed(1)} min`;
-    } else if (result.level === "WARNING") {
-      statusText = `WARNING · rise +${result.rise.toFixed(2)}°C/sample`;
-    } else if (result.level === "ALERT" || result.level === "CRITICAL") {
-      statusText = `${result.level} · exposure ${(result.exposureMs / 60000).toFixed(1)} min`;
+    const exposure = calculateExposure(combined);
+    currentRisk = { ...current, exposureMs: exposure.exposureMs, exposureLevel: exposure.level };
+
+    const currentMeta = RISK[current.level] || RISK.SENSOR_ERROR;
+    const exposureMeta = RISK[exposure.level] || RISK.SAFE;
+
+    let statusText = currentMeta.label;
+    if (current.level === "WARNING") {
+      statusText = `WARNING · rise +${current.rise.toFixed(2)}°C/sample`;
+    } else if (current.level === "MONITORING") {
+      statusText = "MONITORING · current temperature ≥6°C";
     }
 
     setText("tempStatus", statusText);
-    setText("tempBadge", meta.label);
+    setText("tempBadge", currentMeta.label);
 
     const alertBox = $("alertBox");
     if (alertBox) {
-      alertBox.className = `alert ${meta.css}`;
-      alertBox.textContent = `${meta.label}: ${meta.message}` +
-        (Number.isFinite(result.temperature)
-          ? ` Current: ${result.temperature.toFixed(2)}°C.`
+      const currentLine = `${currentMeta.label}: ${currentMeta.message}` +
+        (Number.isFinite(current.temperature)
+          ? ` Current: ${current.temperature.toFixed(2)}°C.`
           : "");
+      const exposureLine = exposure.level === "SAFE"
+        ? " Historical exposure: no confirmed continuous exposure above 6°C."
+        : ` Historical exposure risk: ${exposureMeta.label} (${(exposure.exposureMs / 60000).toFixed(1)} minutes at/above 6°C).`;
+      alertBox.className = `alert ${currentMeta.css}`;
+      alertBox.textContent = currentLine + exposureLine;
     }
 
     const riskDot = $("tempDot");
     if (riskDot) {
       riskDot.className = "dot " +
-        (result.level === "SAFE" ? "good" :
-          result.level === "MONITORING" ? "warn" : "bad");
+        (current.level === "SAFE" ? "good" :
+          current.level === "MONITORING" || current.level === "WARNING" ? "warn" : "bad");
     }
 
-    const riskKey = `${result.level}`;
+    // Sound/notifications still warn about historical exposure, but the
+    // visible CURRENT status remains based only on the latest temperature.
+    const alarmLevel = severityRank(exposure.level) > severityRank(current.level)
+      ? exposure.level
+      : current.level;
+    const riskKey = `${current.level}:${exposure.level}`;
     if (riskKey !== lastRiskKey) {
-      if (["WARNING", "ALERT", "CRITICAL"].includes(result.level)) {
+      if (["WARNING", "ALERT", "CRITICAL"].includes(alarmLevel)) {
         if (lastNotifiedRiskKey !== riskKey) {
           sendBrowserNotification(
-            `MilkGuard ${result.level}: ${result.temperature.toFixed(2)}°C`,
-            `${meta.message} Exposure: ${(result.exposureMs / 60000).toFixed(1)} minutes.`
+            `MilkGuard ${alarmLevel}: ${Number.isFinite(current.temperature) ? current.temperature.toFixed(2) : "—"}°C`,
+            `Current temperature: ${currentMeta.label}. Historical exposure: ${exposure.level}, ${(exposure.exposureMs / 60000).toFixed(1)} minutes.`
           );
           lastNotifiedRiskKey = riskKey;
         }
-        playRiskSound(result.level);
+        playRiskSound(alarmLevel);
       } else {
         stopSoundLoop();
         lastNotifiedRiskKey = "";
@@ -878,9 +946,20 @@
     );
   }
 
-  function statusForHistory(record, recordsUpToThisPoint) {
-    const risk = classifyRisk(recordsUpToThisPoint);
-    return risk.level === "MONITORING" ? "MONITORING (≥6°C)" : risk.level;
+  function statusForHistory(record, allRecords) {
+    const sorted = getSortedTemperatureRecords(allRecords);
+    const recordTime = timestampMs(record);
+    const index = sorted.findIndex((item) => item.timestamp === recordTime);
+    const previous = index > 0
+      ? {
+          temperatureC: sorted[index - 1].temperature,
+          timestamp: sorted[index - 1].timestamp,
+          temperatureValid: true
+        }
+      : null;
+
+    const status = classifyCurrentTemperature(record, previous);
+    return status.level === "MONITORING" ? "MONITORING (≥6°C)" : status.level;
   }
 
   function renderHistory(snapshot) {
@@ -963,8 +1042,8 @@
       if (!latest || latest.temperatureC == null) {
         return "No valid temperature reading is available yet. Check the DS18B20 sensor and the Firebase latest record.";
       }
-      const risk = currentRisk || classifyRisk([...historyRecords, latest]);
-      return `Current temperature: ${Number(latest.temperatureC).toFixed(2)}°C. Risk: ${risk.level}. Exposure at/above 6°C: ${(risk.exposureMs / 60000).toFixed(1)} minutes. ${RISK[risk.level].message}`;
+      const risk = currentRisk;
+      return `Current temperature: ${Number(latest.temperatureC).toFixed(2)}°C. Current status: ${risk?.level || "UNKNOWN"}. Historical exposure: ${risk?.exposureLevel || "UNKNOWN"} (${((risk?.exposureMs || 0) / 60000).toFixed(1)} minutes at/above 6°C).`;
     }
 
     if (/location history|track.*location|route history/.test(query)) {
@@ -983,11 +1062,11 @@
       if (!latest) {
         return "I have not received a truck record yet. Check Firebase and ensure the ESP32 uploads to /trucks/<truckId>/latest.";
       }
-      const risk = currentRisk || classifyRisk([...historyRecords, latest]);
+      const risk = currentRisk;
       const value = Number.isFinite(Number(latest.temperatureC))
         ? `${Number(latest.temperatureC).toFixed(2)}°C`
         : "unavailable";
-      return `Latest temperature: ${value}. Risk: ${risk.level}. Exposure ≥6°C: ${(risk.exposureMs / 60000).toFixed(1)} minutes. ${RISK[risk.level].message}`;
+      return `Latest temperature: ${value}. Current status: ${risk?.level || "UNKNOWN"}. Historical exposure: ${risk?.exposureLevel || "UNKNOWN"} (${((risk?.exposureMs || 0) / 60000).toFixed(1)} minutes at/above 6°C).`;
     }
 
     if (/gps|location|map|coordinate|satellite/.test(query)) {
@@ -1004,7 +1083,7 @@
     }
 
     if (/alert|alarm|threshold|warning|risk/.test(query)) {
-      return "Risk rules: SAFE below 6°C; WARNING from 6°C to below 7.5°C when the rise is at least 0.4°C per sample; ALERT at 7.5°C or above, or after 10 minutes at/above 6°C; CRITICAL at 9°C or above, or after 30 minutes at/above 6°C. Long gaps in readings are not counted as confirmed exposure.";
+      return "Current temperature rules: SAFE below 6°C; MONITORING from 6°C to below 7.5°C; WARNING in that range if the temperature rises at least 0.4°C between samples; ALERT from 7.5°C to below 9°C; CRITICAL at 9°C or above. Historical exposure is separate: ALERT after 10 confirmed minutes and CRITICAL after 30 confirmed minutes at/above 6°C. Cooling changes the current status but does not erase historical exposure.";
     }
 
     if (/update|not working|troubleshoot|error|failed|problem/.test(query)) {
