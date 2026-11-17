@@ -18,7 +18,7 @@
     },
     MONITORING: {
       label: "MONITORING",
-      message: "Temperature is at or above 6°C. Watching the trend and exposure duration.",
+      message: "Temperature is at or above 6°C. Monitoring the current reading.",
       css: "warn"
     },
     WARNING: {
@@ -28,12 +28,12 @@
     },
     ALERT: {
       label: "ALERT",
-      message: "Temperature is at least 7.5°C, or exposure at/above 6°C has reached 10 minutes.",
+      message: "Current temperature is at least 7.5°C.",
       css: "warn"
     },
     CRITICAL: {
       label: "CRITICAL",
-      message: "Temperature is at least 9°C, or exposure at/above 6°C has reached 30 minutes.",
+      message: "Current temperature is at least 9°C.",
       css: "bad"
     },
     SENSOR_ERROR: {
@@ -64,6 +64,8 @@
   let audioContext = null;
   let soundEnabled = localStorage.getItem(SOUND_KEY) === "true";
   let soundLoopTimer = null;
+  let soundTimeouts = [];
+  let activeOscillators = new Set();
   let lastRiskKey = "";
   let lastNotifiedRiskKey = "";
   let lastMovementState = "Unknown";
@@ -406,10 +408,29 @@
   function stopSoundLoop() {
     if (soundLoopTimer) clearInterval(soundLoopTimer);
     soundLoopTimer = null;
+
+    soundTimeouts.forEach((timer) => clearTimeout(timer));
+    soundTimeouts = [];
+
+    activeOscillators.forEach((oscillator) => {
+      try { oscillator.stop(); } catch (_) {}
+      try { oscillator.disconnect(); } catch (_) {}
+    });
+    activeOscillators.clear();
+  }
+
+  function scheduleSound(callback, delayMs) {
+    const timer = setTimeout(() => {
+      soundTimeouts = soundTimeouts.filter((item) => item !== timer);
+      callback();
+    }, delayMs);
+    soundTimeouts.push(timer);
+    return timer;
   }
 
   function playTone(frequency, durationMs, volume = 0.12) {
-    if (!soundEnabled) return;
+    if (!soundEnabled || !currentRisk ||
+        !["WARNING", "ALERT", "CRITICAL"].includes(currentRisk.level)) return;
 
     try {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -422,6 +443,12 @@
 
       const oscillator = audioContext.createOscillator();
       const gain = audioContext.createGain();
+
+      activeOscillators.add(oscillator);
+      oscillator.onended = () => {
+        activeOscillators.delete(oscillator);
+        try { oscillator.disconnect(); } catch (_) {}
+      };
 
       oscillator.type = "sine";
       oscillator.frequency.value = frequency;
@@ -441,19 +468,31 @@
   }
 
   function playRiskSound(level) {
-    if (!soundEnabled) return;
+    if (!soundEnabled || !["WARNING", "ALERT", "CRITICAL"].includes(level)) {
+      stopSoundLoop();
+      return;
+    }
+
     stopSoundLoop();
 
     const pattern = () => {
+      // Re-check the live current status before every tone.
+      if (!soundEnabled || !currentRisk ||
+          currentRisk.level !== level ||
+          !["WARNING", "ALERT", "CRITICAL"].includes(currentRisk.level)) {
+        stopSoundLoop();
+        return;
+      }
+
       if (level === "WARNING") {
         playTone(720, 180);
       } else if (level === "ALERT") {
         playTone(850, 180);
-        setTimeout(() => playTone(850, 180), 280);
+        scheduleSound(() => playTone(850, 180), 280);
       } else if (level === "CRITICAL") {
         playTone(980, 260);
-        setTimeout(() => playTone(760, 260), 330);
-        setTimeout(() => playTone(980, 260), 660);
+        scheduleSound(() => playTone(760, 260), 330);
+        scheduleSound(() => playTone(980, 260), 660);
       }
     };
 
@@ -505,19 +544,25 @@
 
     const current = latestValid
       ? classifyCurrentTemperature(
-          { temperatureC: latestValid.temperature, timestamp: latestValid.timestamp, temperatureValid: true },
+          {
+            temperatureC: latestValid.temperature,
+            timestamp: latestValid.timestamp,
+            temperatureValid: true
+          },
           previousValid
-            ? { temperatureC: previousValid.temperature, timestamp: previousValid.timestamp, temperatureValid: true }
+            ? {
+                temperatureC: previousValid.temperature,
+                timestamp: previousValid.timestamp,
+                temperatureValid: true
+              }
             : null
         )
       : { level: "SENSOR_ERROR", temperature: NaN, rise: 0, timestamp: NaN };
 
-    const exposure = calculateExposure(combined);
-    currentRisk = { ...current, exposureMs: exposure.exposureMs, exposureLevel: exposure.level };
+    // Alerts and sound are based ONLY on the latest current temperature status.
+    currentRisk = current;
 
     const currentMeta = RISK[current.level] || RISK.SENSOR_ERROR;
-    const exposureMeta = RISK[exposure.level] || RISK.SAFE;
-
     let statusText = currentMeta.label;
     if (current.level === "WARNING") {
       statusText = `WARNING · rise +${current.rise.toFixed(2)}°C/sample`;
@@ -534,11 +579,8 @@
         (Number.isFinite(current.temperature)
           ? ` Current: ${current.temperature.toFixed(2)}°C.`
           : "");
-      const exposureLine = exposure.level === "SAFE"
-        ? " Historical exposure: no confirmed continuous exposure above 6°C."
-        : ` Historical exposure risk: ${exposureMeta.label} (${(exposure.exposureMs / 60000).toFixed(1)} minutes at/above 6°C).`;
       alertBox.className = `alert ${currentMeta.css}`;
-      alertBox.textContent = currentLine + exposureLine;
+      alertBox.textContent = currentLine;
     }
 
     const riskDot = $("tempDot");
@@ -548,34 +590,32 @@
           current.level === "MONITORING" || current.level === "WARNING" ? "warn" : "bad");
     }
 
-    // Sound/notifications still warn about historical exposure, but the
-    // visible CURRENT status remains based only on the latest temperature.
-    const alarmLevel = severityRank(exposure.level) > severityRank(current.level)
-      ? exposure.level
-      : current.level;
-    const riskKey = `${current.level}:${exposure.level}`;
-    if (riskKey !== lastRiskKey) {
-      if (["WARNING", "ALERT", "CRITICAL"].includes(alarmLevel)) {
-        if (lastNotifiedRiskKey !== riskKey) {
-          sendBrowserNotification(
-            `MilkGuard ${alarmLevel}: ${Number.isFinite(current.temperature) ? current.temperature.toFixed(2) : "—"}°C`,
-            `Current temperature: ${currentMeta.label}. Historical exposure: ${exposure.level}, ${(exposure.exposureMs / 60000).toFixed(1)} minutes.`
-          );
-          lastNotifiedRiskKey = riskKey;
-        }
-        playRiskSound(alarmLevel);
-      } else {
-        stopSoundLoop();
-        lastNotifiedRiskKey = "";
+    const soundRisk = ["WARNING", "ALERT", "CRITICAL"].includes(current.level);
+    if (!soundRisk) {
+      // SAFE/MONITORING/SENSOR_ERROR: stop intervals, queued tones, and tones already playing.
+      stopSoundLoop();
+      lastRiskKey = current.level;
+      lastNotifiedRiskKey = "";
+      return;
+    }
+
+    if (current.level !== lastRiskKey) {
+      if (lastNotifiedRiskKey !== current.level) {
+        sendBrowserNotification(
+          `MilkGuard ${current.level}: ${Number.isFinite(current.temperature) ? current.temperature.toFixed(2) : "—"}°C`,
+          `Current temperature status: ${current.level}.`
+        );
+        lastNotifiedRiskKey = current.level;
       }
-      lastRiskKey = riskKey;
+      playRiskSound(current.level);
+      lastRiskKey = current.level;
     }
   }
 
   function updateSoundButton() {
     const button = $("soundToggle");
     if (!button) return;
-    button.textContent = soundEnabled ? "🔊 Sound alerts: ON" : "🔊 Enable sound alerts";
+    button.textContent = soundEnabled ? "🔊 Sound enabled" : "🔇 Sound disabled";
     button.classList.toggle("sound-on", soundEnabled);
     button.setAttribute("aria-pressed", String(soundEnabled));
   }
@@ -1043,7 +1083,7 @@
         return "No valid temperature reading is available yet. Check the DS18B20 sensor and the Firebase latest record.";
       }
       const risk = currentRisk;
-      return `Current temperature: ${Number(latest.temperatureC).toFixed(2)}°C. Current status: ${risk?.level || "UNKNOWN"}. Historical exposure: ${risk?.exposureLevel || "UNKNOWN"} (${((risk?.exposureMs || 0) / 60000).toFixed(1)} minutes at/above 6°C).`;
+      return `Current temperature: ${Number(latest.temperatureC).toFixed(2)}°C. Current status: ${risk?.level || "UNKNOWN"}. Sound alerts use only this current status.`;
     }
 
     if (/location history|track.*location|route history/.test(query)) {
@@ -1066,7 +1106,7 @@
       const value = Number.isFinite(Number(latest.temperatureC))
         ? `${Number(latest.temperatureC).toFixed(2)}°C`
         : "unavailable";
-      return `Latest temperature: ${value}. Current status: ${risk?.level || "UNKNOWN"}. Historical exposure: ${risk?.exposureLevel || "UNKNOWN"} (${((risk?.exposureMs || 0) / 60000).toFixed(1)} minutes at/above 6°C).`;
+      return `Latest temperature: ${value}. Current status: ${risk?.level || "UNKNOWN"}. Sound alerts use only this current status.`;
     }
 
     if (/gps|location|map|coordinate|satellite/.test(query)) {
@@ -1083,7 +1123,7 @@
     }
 
     if (/alert|alarm|threshold|warning|risk/.test(query)) {
-      return "Current temperature rules: SAFE below 6°C; MONITORING from 6°C to below 7.5°C; WARNING in that range if the temperature rises at least 0.4°C between samples; ALERT from 7.5°C to below 9°C; CRITICAL at 9°C or above. Historical exposure is separate: ALERT after 10 confirmed minutes and CRITICAL after 30 confirmed minutes at/above 6°C. Cooling changes the current status but does not erase historical exposure.";
+      return "Current temperature rules: SAFE below 6°C; MONITORING from 6°C to below 7.5°C; WARNING in that range if the temperature rises at least 0.4°C between samples; ALERT from 7.5°C to below 9°C; CRITICAL at 9°C or above. Sound alerts depend only on the latest current temperature status and stop when it returns to SAFE or MONITORING.";
     }
 
     if (/update|not working|troubleshoot|error|failed|problem/.test(query)) {
@@ -1116,7 +1156,11 @@
           setTimeout(() => playTone(660, 180, 0.2), 240);
 
           if (currentRisk && ["WARNING", "ALERT", "CRITICAL"].includes(currentRisk.level)) {
-            setTimeout(() => playRiskSound(currentRisk.level), 500);
+            scheduleSound(() => {
+              if (currentRisk && ["WARNING", "ALERT", "CRITICAL"].includes(currentRisk.level)) {
+                playRiskSound(currentRisk.level);
+              }
+            }, 500);
           }
         } catch (error) {
           soundEnabled = false;
