@@ -181,13 +181,33 @@
   }
 
   async function notifyTemperature(title, body) {
-    if (!("Notification" in window)) return;
-    if (Notification.permission === "default") {
-      try { await Notification.requestPermission(); } catch {}
+    // Browser notifications require HTTPS (or localhost) and prior user permission.
+    if (!("Notification" in window) || Notification.permission !== "granted") {
+      console.info("MilkGuard alert:", title, body, "(Enable browser notifications to receive pop-ups.)");
+      return false;
     }
-    if (Notification.permission === "granted") {
-      try { new Notification(title, { body, icon: "./icons/icon-192.png", tag: "milk-truck-temperature-alert", renotify: true }); }
-      catch (e) { console.warn("Browser notification unavailable:", e); }
+    const options = {
+      body,
+      icon: "./icons/icon-192.png",
+      badge: "./icons/icon-192.png",
+      tag: "milk-truck-temperature-alert",
+      renotify: true,
+      requireInteraction: true,
+      vibrate: [250, 120, 250]
+    };
+    try {
+      const registration = ("serviceWorker" in navigator)
+        ? await navigator.serviceWorker.getRegistration()
+        : null;
+      if (registration && registration.showNotification) {
+        await registration.showNotification(title, options);
+      } else {
+        new Notification(title, options);
+      }
+      return true;
+    } catch (e) {
+      console.warn("Browser notification unavailable:", e);
+      return false;
     }
   }
 
@@ -410,21 +430,70 @@
     soundEnabled = !soundEnabled;
     localStorage.setItem("milkTruckSoundEnabled", String(soundEnabled));
     if (soundEnabled) {
-      const Ctx=window.AudioContext || window.webkitAudioContext;
-      if (Ctx) { audioContext=audioContext || new Ctx(); try { await audioContext.resume(); } catch {} }
-      playTone(620,100,0.08);
-      if (currentRisk && ["WARNING","ALERT","CRITICAL"].includes(currentRisk.level)) playRiskSound(currentRisk.level);
-    } else stopSoundLoop();
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) {
+        soundEnabled = false;
+        alert("This browser does not support dashboard audio. Try the latest Chrome or Edge.");
+      } else {
+        try {
+          audioContext = audioContext || new Ctx();
+          if (audioContext.state === "suspended") await audioContext.resume();
+          // Audible confirmation proves that the browser has unlocked audio.
+          playTone(880, 220, 0.22);
+          setTimeout(() => playTone(660, 220, 0.22), 260);
+          if (currentRisk && ["WARNING","ALERT","CRITICAL"].includes(currentRisk.level)) {
+            setTimeout(() => playRiskSound(currentRisk.level), 520);
+          }
+        } catch (e) {
+          console.warn("Could not enable dashboard sound:", e);
+          soundEnabled = false;
+          alert("Sound could not start. Check browser/site sound permissions and try again.");
+        }
+      }
+    } else {
+      stopSoundLoop();
+    }
     updateSoundButton();
   });
 
   $("enableNotifications").addEventListener("click", async () => {
-    if (!("Notification" in window)) return;
+    const btn = $("enableNotifications");
+    if (!("Notification" in window)) {
+      btn.textContent = "Notifications unsupported";
+      alert("This browser does not support notifications. Use an updated Chrome or Edge browser.");
+      return;
+    }
+    if (!window.isSecureContext) {
+      alert("Browser notifications require HTTPS. Open the deployed HTTPS website (or localhost), not a file:// page.");
+      return;
+    }
     try {
       const permission = await Notification.requestPermission();
-      $("enableNotifications").textContent = permission === "granted" ? "Browser notifications enabled" : "Enable browser notifications";
-      if (permission === "granted") new Notification("Milk Truck Live notifications enabled", {body:"You will be notified when a temperature alert is detected.", icon:"./icons/icon-192.png"});
-    } catch (e) { console.warn("Notification permission:", e); }
+      if (permission === "granted") {
+        btn.textContent = "Notifications: ON";
+        const registration = ("serviceWorker" in navigator) ? await navigator.serviceWorker.ready : null;
+        if (registration && registration.showNotification) {
+          await registration.showNotification("Milk Truck Live notifications enabled", {
+            body: "You will receive a notification when a milk temperature risk is detected.",
+            icon: "./icons/icon-192.png",
+            tag: "milkguard-notification-test"
+          });
+        } else {
+          new Notification("Milk Truck Live notifications enabled", {
+            body: "You will receive a notification when a milk temperature risk is detected.",
+            icon: "./icons/icon-192.png"
+          });
+        }
+      } else {
+        btn.textContent = permission === "denied" ? "Notifications blocked" : "Enable browser notifications";
+        alert(permission === "denied"
+          ? "Notifications are blocked for this site. Open the browser site settings, allow Notifications, then reload."
+          : "Notification permission was not granted.");
+      }
+    } catch (e) {
+      console.warn("Notification permission:", e);
+      alert("Could not enable notifications: " + (e.message || e));
+    }
   });
 
   $("chatForm").addEventListener("submit", e => {
