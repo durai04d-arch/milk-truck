@@ -62,3 +62,19 @@ When location permission is granted and Firebase is connected, the dashboard wri
 - `/trucks/milkTruck01/gpsLocationHistory` (appended history)
 
 Each record contains `latitude`, `longitude`, `accuracyMeters`, `timestamp`, and `locationName: "GPS"`. The browser must remain open to keep collecting new location points. The authenticated Firebase user needs write permission for these paths. Avoid public database rules for real tracking data.
+
+
+## Rural MilkGuard risk classification and dashboard sound
+
+This website implements the four-level risk model from the supplied reference:
+- SAFE: below 6°C.
+- WARNING: 6–7.5°C with a rise of at least 0.4°C compared with the previous sample, while at/above 6°C.
+- ALERT: 7.5–9°C, or at/above 6°C for 10 minutes.
+- CRITICAL: at/above 9°C, or at/above 6°C for 30 minutes.
+- If the temperature is at/above 6°C but neither trend nor exposure condition has escalated it yet, the dashboard shows MONITORING.
+
+Exposure is calculated from timestamped history samples. It accumulates only across consecutive observed samples at/above 6°C and resets after a below-6°C sample; a gap longer than 10 minutes breaks continuity because the temperature during that gap is unknown. The dashboard loads up to 500 history samples to cover the 30-minute rule.
+
+Use the **Enable sound alerts** button once after opening the dashboard. Browsers require a user gesture before playing audio. WARNING produces a short beep, ALERT repeated double beeps, and CRITICAL a more urgent repeating pattern. Browser notifications are separate and require notification permission.
+
+This ZIP contains the website/PWA source only. It does not contain ESP32 Arduino firmware. The dashboard derives risk from Firebase history and does not automatically control the ESP32 buzzer/LED; the same risk algorithm must also be implemented in the ESP32 firmware for hardware alerts. Confirm the chosen sampling interval and cold-chain limits with your project supervisor/approved milk handling protocol.

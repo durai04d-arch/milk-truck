@@ -6,3 +6,8 @@
 .notification-btn{margin-top:10px;font-size:12px;padding:8px 11px}
 
 .analytics-panel{margin:0 0 16px}.chart-wrap{width:100%;min-width:0}.chart-wrap canvas{display:block;width:100%;height:260px}.chart-summary{color:var(--cyan);font-size:12px;white-space:nowrap}
+
+.alert-controls{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+.sound-on{border-color:var(--green)!important;color:var(--green)!important}
+.risk-legend{color:var(--muted);font-size:12px;line-height:1.6;margin:12px 0 0}
+.alert.good{border-color:#2d8a60}.alert.warn{border-color:#c18a2d}.alert.bad{border-color:#b84a4a}
