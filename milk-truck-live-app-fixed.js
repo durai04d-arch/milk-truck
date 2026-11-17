@@ -64,6 +64,8 @@
   let audioContext = null;
   let soundEnabled = localStorage.getItem(SOUND_KEY) === "true";
   let soundLoopTimer = null;
+  let soundTimeouts = [];
+  let activeSoundOscillators = new Set();
   let lastRiskKey = "";
   let lastNotifiedRiskKey = "";
   let lastSoundLevel = "";
@@ -407,6 +409,14 @@
   function stopSoundLoop() {
     if (soundLoopTimer) clearInterval(soundLoopTimer);
     soundLoopTimer = null;
+
+    // Cancel any delayed tones and stop tones that are already playing.
+    soundTimeouts.forEach((timeoutId) => clearTimeout(timeoutId));
+    soundTimeouts = [];
+    activeSoundOscillators.forEach((oscillator) => {
+      try { oscillator.stop(); } catch (_) { /* Already stopped. */ }
+    });
+    activeSoundOscillators.clear();
   }
 
   function playTone(frequency, durationMs, volume = 0.12) {
@@ -434,6 +444,8 @@
 
       oscillator.connect(gain);
       gain.connect(audioContext.destination);
+      activeSoundOscillators.add(oscillator);
+      oscillator.onended = () => activeSoundOscillators.delete(oscillator);
       oscillator.start();
       oscillator.stop(audioContext.currentTime + durationMs / 1000);
     } catch (error) {
@@ -450,11 +462,11 @@
         playTone(720, 180);
       } else if (level === "ALERT") {
         playTone(850, 180);
-        setTimeout(() => playTone(850, 180), 280);
+        soundTimeouts.push(setTimeout(() => playTone(850, 180), 280));
       } else if (level === "CRITICAL") {
         playTone(980, 260);
-        setTimeout(() => playTone(760, 260), 330);
-        setTimeout(() => playTone(980, 260), 660);
+        soundTimeouts.push(setTimeout(() => playTone(760, 260), 330));
+        soundTimeouts.push(setTimeout(() => playTone(980, 260), 660));
       }
     };
 
@@ -572,15 +584,19 @@
       lastRiskKey = riskKey;
     }
 
+    // SOUND IS BASED ONLY ON THE LATEST CURRENT TEMPERATURE STATUS.
+    // Historical exposure is intentionally excluded from this decision.
     const currentNeedsSound = ["WARNING", "ALERT", "CRITICAL"].includes(current.level);
-    if (currentNeedsSound && soundEnabled) {
+    if (soundEnabled && currentNeedsSound) {
       if (lastSoundLevel !== current.level) {
         playRiskSound(current.level);
       }
     } else {
+      // Stop the interval, pending pattern tones, and any tone already playing
+      // immediately when the current reading is SAFE/MONITORING or sound is off.
       stopSoundLoop();
     }
-    lastSoundLevel = currentNeedsSound ? current.level : "";
+    lastSoundLevel = soundEnabled && currentNeedsSound ? current.level : "";
   }
 
   function updateSoundButton() {
